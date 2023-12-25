@@ -56,7 +56,7 @@ fn generate_startlist(
     let mut competitors = Vec::with_capacity(competitors_count);
     let mut curr_start = 0;
     let mut windows_curr_start = 0;
-    for (i, window) in windows.into_iter().enumerate() {
+    for window in windows.into_iter() {
         if window.competitors.len() as i32 != 0 {
             let space = max(
                 entire_spacing.unwrap_or(calculate_window_space(
