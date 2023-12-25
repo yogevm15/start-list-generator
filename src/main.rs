@@ -37,7 +37,11 @@ fn generate_startlist(
         competitors_count += window.competitors.len();
         entire_duration += window.duration;
     }
-    let entire_spacing = calculate_window_space(entire_duration, competitors_count);
+    if competitors_count < 0 {
+        return vec![];
+    }
+
+    let entire_spacing = entire_duration.div_ceil(competitors_count);
     let entire_spacing = if entire_spacing <= spacing_threshold {
         // the entire spacing is smaller than spacing_threshold,
         // thus we need don't need to stabilize, just use the entire spacing for all competitors.
