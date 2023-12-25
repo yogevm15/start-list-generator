@@ -27,33 +27,40 @@ fn generate_startlist(
     min_spacing: Minutes,
 ) -> Vec<CompetitorWithOffset> {
     let mut competitors_count = 0;
+    let mut entire_duration = 0;
+
     for window in windows.iter_mut() {
         window
             .competitors
             .make_contiguous()
             .shuffle(&mut thread_rng());
         competitors_count += window.competitors.len();
+        entire_duration += window.duration;
     }
-
-    for i in 0..windows.len() {
-        stabilize_window(&mut windows, i, spacing_threshold);
-    }
+    let entire_spacing = calculate_window_space(entire_duration, competitors_count);
+    let entire_spacing = if entire_spacing <= spacing_threshold {
+        // the entire spacing is smaller than spacing_threshold,
+        // thus we need don't need to stabilize, just use the entire spacing for all competitors.
+        Some(entire_spacing)
+    } else {
+        for i in 0..windows.len() {
+            stabilize_window(&mut windows, i, spacing_threshold);
+        }
+        None
+    };
 
     let mut competitors = Vec::with_capacity(competitors_count);
     let mut curr_start = 0;
     let mut windows_curr_start = 0;
-    let windows_len = windows.len();
     for (i, window) in windows.into_iter().enumerate() {
         if window.competitors.len() as i32 != 0 {
-            let space = if i == windows_len - 1 {
-                // Last window (inclusive duration)
-                calculate_window_space(window.duration, window.competitors.len() - 1)
-            } else {
-                // Normal window (exclusive duration)
-                calculate_window_space(window.duration, window.competitors.len())
-            };
-
-            let space = max(space, min_spacing);
+            let space = max(
+                entire_spacing.unwrap_or(calculate_window_space(
+                    window.duration,
+                    window.competitors.len(),
+                )),
+                min_spacing,
+            );
             for comp in window.competitors {
                 competitors.push(CompetitorWithOffset {
                     competitor: comp,
@@ -177,6 +184,8 @@ fn main() {
                 Competitor { name: "C18".into() },
                 Competitor { name: "C19".into() },
                 Competitor { name: "C20".into() },
+                Competitor { name: "C21".into() },
+                Competitor { name: "C22".into() },
             ]),
         },
         Window {
