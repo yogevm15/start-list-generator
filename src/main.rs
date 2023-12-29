@@ -37,7 +37,7 @@ fn generate_startlist(
         competitors_count += window.competitors.len();
         entire_duration += window.duration;
     }
-    if competitors_count < 0 {
+    if competitors_count <= 0 {
         return vec![];
     }
 
@@ -88,8 +88,9 @@ fn move_to_prev_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: M
     windows[i - 1].competitors.push_back(popped_competitor);
 
     // stabilize the modified windows
-    stabilize_window(windows, i - 1, spacing_threshold);
-    stabilize_window(windows, i, spacing_threshold);
+    for i in 0..windows.len() {
+        stabilize_window(windows, i, spacing_threshold);
+    }
 }
 
 fn move_to_next_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minutes) {
@@ -97,8 +98,9 @@ fn move_to_next_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: M
     windows[i + 1].competitors.push_front(popped_competitor);
 
     // stabilize the modified windows
-    stabilize_window(windows, i + 1, spacing_threshold);
-    stabilize_window(windows, i, spacing_threshold);
+    for i in 0..windows.len() {
+        stabilize_window(windows, i, spacing_threshold);
+    }
 }
 
 fn calculate_window_space(duration: Minutes, competitors_count: usize) -> Minutes {
@@ -109,19 +111,31 @@ fn calculate_window_space(duration: Minutes, competitors_count: usize) -> Minute
     duration.div(competitors_count)
 }
 
+fn calculate_window_space_exact(duration: Minutes, competitors_count: usize) -> f64 {
+    if competitors_count == 0 {
+        return duration as f64;
+    }
+
+    (duration as f64).div(competitors_count as f64)
+}
+
 fn stabilize_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minutes) {
     if calculate_window_space(windows[i].duration, windows[i].competitors.len())
         <= spacing_threshold
     {
         // curr is passed the spacing threshold, thus competitors movement is possible
         let curr_window_space =
-            calculate_window_space(windows[i].duration, windows[i].competitors.len() - 1);
+            calculate_window_space_exact(windows[i].duration, windows[i].competitors.len() - 1);
         if i > 0 && i < windows.len() - 1 {
             // Normal window
-            let next_window_spacing =
-                calculate_window_space(windows[i + 1].duration, windows[i + 1].competitors.len());
-            let prev_window_spacing =
-                calculate_window_space(windows[i - 1].duration, windows[i - 1].competitors.len());
+            let next_window_spacing = calculate_window_space_exact(
+                windows[i + 1].duration,
+                windows[i + 1].competitors.len(),
+            );
+            let prev_window_spacing = calculate_window_space_exact(
+                windows[i - 1].duration,
+                windows[i - 1].competitors.len(),
+            );
             if next_window_spacing > curr_window_space && next_window_spacing > prev_window_spacing
             {
                 // next is spaced than curr and prev
@@ -131,14 +145,18 @@ fn stabilize_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minu
                 move_to_prev_window(windows, i, spacing_threshold);
             }
         } else if i > 0
-            && calculate_window_space(windows[i - 1].duration, windows[i - 1].competitors.len())
-                > curr_window_space
+            && calculate_window_space_exact(
+                windows[i - 1].duration,
+                windows[i - 1].competitors.len(),
+            ) > curr_window_space
         {
             // Last window
             move_to_prev_window(windows, i, spacing_threshold);
         } else if i < windows.len() - 1
-            && calculate_window_space(windows[i + 1].duration, windows[i + 1].competitors.len())
-                > curr_window_space
+            && calculate_window_space_exact(
+                windows[i + 1].duration,
+                windows[i + 1].competitors.len(),
+            ) > curr_window_space
         {
             // First window
             move_to_next_window(windows, i, spacing_threshold);
@@ -147,66 +165,139 @@ fn stabilize_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minu
 }
 
 fn main() {
-    let spacing_threshold = 4;
+    let spacing_threshold = 3;
     let min_spacing = 2;
 
-    let time_windows = vec![
+    let mut time_windows = vec![
         Window {
             duration: 30, // 30 minutes
             competitors: VecDeque::from([
-                Competitor { name: "A1".into() },
-                Competitor { name: "A2".into() },
-                Competitor { name: "A3".into() },
-                Competitor { name: "A4".into() },
-                Competitor { name: "A5".into() },
+                Competitor {
+                    name: String::from("Levit Kristina"),
+                },
+                Competitor {
+                    name: String::from("טייטר מקסים"),
+                },
+                Competitor {
+                    name: String::from("צינדר אריאל"),
+                },
+                Competitor {
+                    name: String::from("שפר שי"),
+                },
+                Competitor {
+                    name: String::from("UKR Ersteniuk Volodymyr"),
+                },
+                Competitor {
+                    name: String::from("ליזוגוב ויאצ'סלב"),
+                },
+                Competitor {
+                    name: String::from("שחורי דניאל"),
+                },
+                Competitor {
+                    name: String::from("שפר שחר"),
+                },
+                Competitor {
+                    name: String::from("אורי אופיר"),
+                },
+                Competitor {
+                    name: String::from("גמינדר תומר"),
+                },
+                Competitor {
+                    name: String::from("ויינר תומר"),
+                },
+                Competitor {
+                    name: String::from("לדרר חגי"),
+                },
+                Competitor {
+                    name: String::from("מלץ אבי"),
+                },
+                Competitor {
+                    name: String::from("רגבי לירון"),
+                },
             ]),
         },
         Window {
             duration: 30, // 30 minutes
-            competitors: VecDeque::new(),
-        },
-        Window {
-            duration: 30, // 30 minutes
             competitors: VecDeque::from([
-                Competitor { name: "C1".into() },
-                Competitor { name: "C2".into() },
-                Competitor { name: "C3".into() },
-                Competitor { name: "C4".into() },
-                Competitor { name: "C5".into() },
-                Competitor { name: "C6".into() },
-                Competitor { name: "C7".into() },
-                Competitor { name: "C8".into() },
-                Competitor { name: "C9".into() },
-                Competitor { name: "C10".into() },
-                Competitor { name: "C11".into() },
-                Competitor { name: "C12".into() },
-                Competitor { name: "C13".into() },
-                Competitor { name: "C14".into() },
-                Competitor { name: "C15".into() },
-                Competitor { name: "C16".into() },
-                Competitor { name: "C17".into() },
-                Competitor { name: "C18".into() },
-                Competitor { name: "C19".into() },
-                Competitor { name: "C20".into() },
-                Competitor { name: "C21".into() },
-                Competitor { name: "C22".into() },
+                Competitor {
+                    name: String::from("קלקשטיין בר"),
+                },
+                Competitor {
+                    name: String::from("קלקשטיין יובל"),
+                },
+                Competitor {
+                    name: String::from("שחורי אלון"),
+                },
+                Competitor {
+                    name: String::from("ילין יואב"),
+                },
+                Competitor {
+                    name: String::from("לרמן שגיא"),
+                },
+                Competitor {
+                    name: String::from("לשצ'נקו ניקיטה"),
+                },
+                Competitor {
+                    name: String::from("נוסבוים איתם"),
+                },
+                Competitor {
+                    name: String::from("קלקשטיין נדב"),
+                },
+                Competitor {
+                    name: String::from("רז-רוטשילד דניאל"),
+                },
+                Competitor {
+                    name: String::from("ריינליב דינסטי"),
+                },
+                Competitor {
+                    name: String::from("שפירא אורן"),
+                },
+                Competitor {
+                    name: String::from("אשכנזי אסף"),
+                },
+                Competitor {
+                    name: String::from("גלוזשטיין ולרי"),
+                },
             ]),
         },
         Window {
             duration: 30, // 30 minutes
             competitors: VecDeque::from([
-                Competitor { name: "D1".into() },
-                Competitor { name: "D2".into() },
-                Competitor { name: "D3".into() },
+                Competitor {
+                    name: String::from("מאירקוביץ מארינה"),
+                },
+                Competitor {
+                    name: String::from("מצפון גאיה"),
+                },
+                Competitor {
+                    name: String::from("אילין רומן"),
+                },
+                Competitor {
+                    name: String::from("מאירקוביץ יבגני"),
+                },
+                Competitor {
+                    name: String::from("רון ירדן"),
+                },
+                Competitor {
+                    name: String::from("שפיצר בן ארי"),
+                },
+                Competitor {
+                    name: String::from("קורוטייב מיכאיל"),
+                },
             ]),
+        },
+        Window {
+            duration: 30, // 30 minutes
+            competitors: VecDeque::from([]),
         },
     ];
-
+    time_windows.reverse();
     let result = generate_startlist(time_windows, spacing_threshold, min_spacing);
-    let start_time = chrono::naive::NaiveTime::from_hms_opt(0, 0, 0).unwrap();
-    for competitor_with_offset in result {
+    let start_time = chrono::naive::NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+    for (i, competitor_with_offset) in result.iter().enumerate() {
         println!(
-            "Competitor: {}, time: {}",
+            "[{}] Competitor: {}, time: {}",
+            i + 1,
             competitor_with_offset.competitor.name,
             start_time.add(Duration::minutes(competitor_with_offset.offset as i64))
         );
