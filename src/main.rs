@@ -1,6 +1,8 @@
 #![feature(int_roundings)]
+#![feature(iter_map_windows)]
+#![feature(exclusive_range_pattern)]
 
-use std::cmp::max;
+use std::cmp::{max, Ordering};
 use std::collections::VecDeque;
 use std::ops::{Add, Div};
 
@@ -8,16 +10,9 @@ use chrono::Duration;
 use rand::prelude::SliceRandom;
 use rand::{thread_rng, Rng};
 
-#[derive(PartialEq)]
-enum Origin {
-    Top,
-    Bottom,
-    Current,
-}
-
 type Minutes = isize;
 struct Competitor {
-    origin: Origin,
+    origin: isize, // positive->top, negative->bottom, zero->current
     name: String,
 }
 
@@ -29,6 +24,16 @@ struct CompetitorWithOffset {
 struct Window {
     duration: Minutes,
     competitors: VecDeque<Competitor>,
+}
+
+impl Window {
+    fn calculate_spacing(&self) -> f64 {
+        if self.competitors.len() == 0 {
+            return self.duration as f64;
+        }
+
+        (self.duration as f64).div(self.competitors.len() as f64)
+    }
 }
 
 fn generate_startlist(
@@ -51,24 +56,43 @@ fn generate_startlist(
         return vec![];
     }
 
-    let entire_spacing = entire_duration.div_ceil(competitors_count);
-    let entire_spacing = if entire_spacing <= spacing_threshold {
-        // the entire spacing is smaller than spacing_threshold,
-        // thus we need don't need to stabilize, just use the entire spacing for all competitors.
-        Some(entire_spacing)
+    let entire_spacing = (entire_duration as f64).div(competitors_count as f64);
+    if entire_spacing <= min_spacing as f64 {
+        let mut competitors = Vec::with_capacity(competitors_count as usize);
+        let mut curr_start = 0;
+        for window in windows {
+            for comp in window.competitors {
+                competitors.push(CompetitorWithOffset {
+                    competitor: comp,
+                    offset: curr_start,
+                });
+                curr_start += min_spacing;
+            }
+        }
+        competitors
     } else {
         stabilize_windows(&mut windows, spacing_threshold);
+        println!("END OF STABILIZATION");
+        debug_windows(&mut windows);
+        println!("END OF STABILIZATION");
+        smart_offset_assignments(windows, spacing_threshold, competitors_count)
+    }
+}
 
-        None
-    };
-
+fn smart_offset_assignments(
+    windows: Vec<Window>,
+    spacing_threshold: Minutes,
+    competitors_count: isize,
+) -> Vec<CompetitorWithOffset> {
     let mut competitors = Vec::with_capacity(competitors_count as usize);
     let mut curr_start = 0;
     let mut windows_curr_start = 0;
     for mut window in windows.into_iter() {
         if window.competitors.len() as i32 != 0 {
-            for i in 0..window.competitors.len() {
-                if window.competitors[0].origin == Origin::Bottom {
+            let mut has_bottom = false;
+            while window.competitors.len() > 0 {
+                if window.competitors[0].origin < 0 {
+                    has_bottom = true;
                     competitors.push(CompetitorWithOffset {
                         competitor: window.competitors.pop_front().unwrap(),
                         offset: curr_start,
@@ -80,9 +104,10 @@ fn generate_startlist(
             }
 
             let mut rev_curr_start = windows_curr_start + window.duration - 1;
-            for i in (0..window.competitors.len()).rev() {
-                if window.competitors[window.competitors.len() - 1].origin == Origin::Top {
-                    competitors.push(CompetitorWithOffset {
+            let mut top_competitors = Vec::with_capacity(window.competitors.len());
+            while window.competitors.len() > 0 {
+                if window.competitors[window.competitors.len() - 1].origin > 0 {
+                    top_competitors.push(CompetitorWithOffset {
                         competitor: window.competitors.pop_back().unwrap(),
                         offset: rev_curr_start,
                     });
@@ -94,25 +119,29 @@ fn generate_startlist(
 
             let mut remaining_competitors = window.competitors.len() as isize;
 
-            curr_start -= spacing_threshold;
             if remaining_competitors != 0 {
-                let remaining_space = rev_curr_start + spacing_threshold - curr_start;
+                let remaining_space =
+                    rev_curr_start + spacing_threshold - curr_start - spacing_threshold;
                 let (spacing, mut remainder) = (
                     remaining_space / (remaining_competitors + 1),
                     remaining_space % (remaining_competitors + 1),
                 );
 
                 let mut rng = thread_rng();
-
+                let mut first_in_window = !has_bottom;
                 for comp in window.competitors {
-                    if comp.origin == Origin::Current {
+                    if comp.origin == 0 {
                         if rev_curr_start != (windows_curr_start + window.duration - 1)
                             && rng.gen_bool(remainder as f64 / remaining_competitors as f64)
                         {
                             curr_start += 1;
                             remainder -= 1;
                         }
-                        curr_start += spacing;
+                        if !first_in_window {
+                            curr_start += spacing;
+                        } else {
+                            first_in_window = false;
+                        }
                         competitors.push(CompetitorWithOffset {
                             competitor: comp,
                             offset: curr_start,
@@ -132,272 +161,205 @@ fn generate_startlist(
             } else {
                 windows_curr_start + window.duration - 1 + spacing_threshold
             };
+
+            competitors.extend(top_competitors.into_iter().rev());
         }
         windows_curr_start += window.duration;
     }
     competitors
 }
 
-fn move_to_prev_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minutes) {
-    let mut popped_competitor = windows[i].competitors.pop_front().unwrap();
-    popped_competitor.origin = Origin::Top;
-    windows[i - 1].competitors.push_back(popped_competitor);
-    stabilize_windows(windows, spacing_threshold);
+fn debug_windows(windows: &Vec<Window>) {
+    println!("---------------------");
+    println!("Max diff: {}", calculate_max_diff(windows));
+    for i in 0..windows.len() {
+        println!(
+            "[{i}]: {} / {} = {}",
+            windows[i].duration,
+            windows[i].competitors.len(),
+            windows[i].calculate_spacing()
+        );
+    }
+    println!("---------------------");
 }
 
-fn move_to_next_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minutes) {
-    let mut popped_competitor = windows[i].competitors.pop_back().unwrap();
-    popped_competitor.origin = Origin::Bottom;
-    windows[i + 1].competitors.push_front(popped_competitor);
+fn move_to_prev_window(windows: &mut Vec<Window>, i: usize) {
+    println!("MOVE {} => {}", i, i - 1);
+    let mut popped_competitor = windows[i].competitors.pop_front().unwrap();
+    popped_competitor.origin += 1;
+    windows[i - 1].competitors.push_back(popped_competitor);
+}
 
-    stabilize_windows(windows, spacing_threshold);
+fn move_to_next_window(windows: &mut Vec<Window>, i: usize) {
+    println!("MOVE {} => {}", i, i + 1);
+    let mut popped_competitor = windows[i].competitors.pop_back().unwrap();
+    popped_competitor.origin -= 1;
+    windows[i + 1].competitors.push_front(popped_competitor);
+}
+
+fn calculate_max_diff(windows: &Vec<Window>) -> f64 {
+    let iter = windows.iter().map(|w| w.calculate_spacing());
+    iter.clone()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap()
+        - iter.min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap()
 }
 
 fn stabilize_windows(windows: &mut Vec<Window>, spacing_threshold: Minutes) {
-    let rand_i = thread_rng().gen_range(0..windows.len());
-    for i in 0..windows.len() {
-        stabilize_window(windows, (i + rand_i) % windows.len(), spacing_threshold);
-    }
-}
-
-fn calculate_window_space(duration: Minutes, competitors_count: isize) -> Minutes {
-    if competitors_count == 0 {
-        return duration;
+    if windows.len() < 2 {
+        return;
     }
 
-    duration.div(competitors_count)
-}
-
-fn calculate_window_space_exact(duration: Minutes, competitors_count: isize) -> f64 {
-    if competitors_count == 0 {
-        return duration as f64;
-    }
-
-    (duration as f64).div(competitors_count as f64)
-}
-
-fn stabilize_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minutes) {
-    if calculate_window_space_exact(windows[i].duration, windows[i].competitors.len() as isize)
-        < spacing_threshold as f64
-    {
-        // curr is passed the spacing threshold, thus competitors movement is possible
-        let curr_window_space = calculate_window_space_exact(
-            windows[i].duration,
-            (windows[i].competitors.len()) as isize,
-        );
-        if i > 0 && i < windows.len() - 1 {
-            // Normal window
-            let next_window_spacing = calculate_window_space_exact(
-                windows[i + 1].duration,
-                windows[i + 1].competitors.len() as isize,
-            );
-            let prev_window_spacing = calculate_window_space_exact(
-                windows[i - 1].duration,
-                windows[i - 1].competitors.len() as isize,
-            );
-            if next_window_spacing > curr_window_space && next_window_spacing > prev_window_spacing
-            {
-                // next is spaced than curr and prev
-                move_to_next_window(windows, i, spacing_threshold);
-            } else if prev_window_spacing > curr_window_space
-                && prev_window_spacing > next_window_spacing
-            {
-                // prev is spaced than curr and next
-                move_to_prev_window(windows, i, spacing_threshold);
-            } else if prev_window_spacing > curr_window_space
-                && prev_window_spacing == next_window_spacing
-            {
-                if thread_rng().gen_bool(0.5) {
-                    move_to_prev_window(windows, i, spacing_threshold);
-                } else {
-                    move_to_next_window(windows, i, spacing_threshold);
+    let mut last_movement = None::<((usize, f64), (usize, f64), f64)>;
+    let mut last_max_diff = f64::MAX;
+    loop {
+        debug_windows(windows);
+        let diffs = (0..windows.len())
+            .map(|i| (i, windows[i].calculate_spacing()))
+            .map_windows(|[s1, s2]| (s1.clone(), s2.clone(), s1.1 - s2.1))
+            .filter(|(s1, s2, _)| {
+                s1.1 <= spacing_threshold as f64 || s2.1 <= spacing_threshold as f64
+            });
+        let curr_movement = diffs.max_by(|d1, d2| d1.2.abs().partial_cmp(&d2.2.abs()).unwrap());
+        if curr_movement.is_none() {
+            break;
+        }
+        let curr_movement = curr_movement.unwrap();
+        let curr_max_diff = calculate_max_diff(windows);
+        if (curr_max_diff > last_max_diff)
+            || last_movement.is_some_and(|(_, _, last_diff)| last_diff.abs() == curr_max_diff)
+        {
+            match last_movement {
+                Some(((_, _), (src, _), diff)) if diff < 0.0 => {
+                    move_to_prev_window(windows, src);
+                }
+                Some(((src, _), (_, _), diff)) if diff > 0.0 => {
+                    move_to_next_window(windows, src);
+                }
+                _ => {
+                    unreachable!();
                 }
             }
-        } else if i > 0
-            && calculate_window_space_exact(
-                windows[i - 1].duration,
-                windows[i - 1].competitors.len() as isize,
-            ) > curr_window_space
-        {
-            // Last window
-            move_to_prev_window(windows, i, spacing_threshold);
-        } else if i < windows.len() - 1
-            && calculate_window_space_exact(
-                windows[i + 1].duration,
-                windows[i + 1].competitors.len() as isize,
-            ) > curr_window_space
-        {
-            // First window
-            move_to_next_window(windows, i, spacing_threshold);
+            break;
         }
+        match curr_movement {
+            ((src, _), (_, _), diff) if diff < 0.0 => {
+                move_to_next_window(windows, src);
+            }
+            ((_, _), (src, _), diff) if diff > 0.0 => {
+                move_to_prev_window(windows, src);
+            }
+            _ => {
+                break;
+            }
+        }
+        last_movement.replace(curr_movement);
+        last_max_diff = curr_max_diff;
     }
 }
+
+// fn stabilize_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minutes) {
+//     if calculate_window_space(windows[i].duration, windows[i].competitors.len() as isize)
+//         < spacing_threshold as f64
+//     {
+//         // curr is passed the spacing threshold, thus competitors movement is possible
+//         let curr_window_space =
+//             calculate_window_space(windows[i].duration, windows[i].competitors.len() as isize);
+//         if i > 0 && i < windows.len() - 1 {
+//             // Normal window
+//             let next_window_spacing = calculate_window_space(
+//                 windows[i + 1].duration,
+//                 windows[i + 1].competitors.len() as isize,
+//             );
+//             let prev_window_spacing = calculate_window_space(
+//                 windows[i - 1].duration,
+//                 windows[i - 1].competitors.len() as isize,
+//             );
+//             if next_window_spacing > curr_window_space && next_window_spacing > prev_window_spacing
+//             {
+//                 // next is spaced than curr and prev
+//                 move_to_next_window(windows, i, spacing_threshold);
+//             } else if prev_window_spacing > curr_window_space
+//                 && prev_window_spacing > next_window_spacing
+//             {
+//                 // prev is spaced than curr and next
+//                 move_to_prev_window(windows, i, spacing_threshold);
+//             } else if prev_window_spacing > curr_window_space
+//                 && prev_window_spacing == next_window_spacing
+//             {
+//                 if thread_rng().gen_bool(0.5) {
+//                     move_to_prev_window(windows, i, spacing_threshold);
+//                 } else {
+//                     move_to_next_window(windows, i, spacing_threshold);
+//                 }
+//             }
+//         } else if i > 0
+//             && calculate_window_space(
+//                 windows[i - 1].duration,
+//                 windows[i - 1].competitors.len() as isize,
+//             ) > curr_window_space
+//         {
+//             // Last window
+//             move_to_prev_window(windows, i, spacing_threshold);
+//         } else if i < windows.len() - 1
+//             && calculate_window_space(
+//                 windows[i + 1].duration,
+//                 windows[i + 1].competitors.len() as isize,
+//             ) > curr_window_space
+//         {
+//             // First window
+//             move_to_next_window(windows, i, spacing_threshold);
+//         }
+//     }
+// }
 
 fn main() {
     let spacing_threshold = 3;
     let min_spacing = 2;
 
-    let mut time_windows = vec![
-        Window {
-            duration: 30, // 30 minutes
-            competitors: VecDeque::from([
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("Levit Kristina"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("טייטר מקסים"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("צינדר אריאל"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("שפר שי"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("UKR Ersteniuk Volodymyr"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("ליזוגוב ויאצ'סלב"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("שחורי דניאל"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("שפר שחר"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("אורי אופיר"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("גמינדר תומר"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("ויינר תומר"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("לדרר חגי"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("מלץ אבי"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("רגבי לירון"),
-                },
-            ]),
+    let mut time_windows = vec![];
+
+    time_windows.push(Window {
+        duration: 30,
+        competitors: {
+            let mut competitors = VecDeque::new();
+            for i in 0..10 {
+                competitors.push_front(Competitor {
+                    name: format!("Competitor {}", i),
+                    origin: 0,
+                })
+            }
+            competitors
         },
-        Window {
-            duration: 30, // 30 minutes
-            competitors: VecDeque::from([
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("קלקשטיין בר"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("קלקשטיין יובל"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("שחורי אלון"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("ילין יואב"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("לרמן שגיא"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("לשצ'נקו ניקיטה"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("נוסבוים איתם"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("קלקשטיין נדב"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("רז-רוטשילד דניאל"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("ריינליב דינסטי"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("שפירא אורן"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("אשכנזי אסף"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("גלוזשטיין ולרי"),
-                },
-            ]),
+    });
+    time_windows.push(Window {
+        duration: 30,
+        competitors: {
+            let mut competitors = VecDeque::new();
+            for i in 0..10 {
+                competitors.push_front(Competitor {
+                    name: format!("Competitor {}", i),
+                    origin: 0,
+                })
+            }
+            competitors
         },
-        Window {
-            duration: 30, // 30 minutes
-            competitors: VecDeque::from([
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("מאירקוביץ מארינה"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("מצפון גאיה"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("אילין רומן"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("מאירקוביץ יבגני"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("רון ירדן"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("שפיצר בן ארי"),
-                },
-                Competitor {
-                    origin: Origin::Current,
-                    name: String::from("קורוטייב מיכאיל"),
-                },
-            ]),
+    });
+    time_windows.push(Window {
+        duration: 30,
+        competitors: {
+            let mut competitors = VecDeque::new();
+            for i in 0..15 {
+                competitors.push_front(Competitor {
+                    name: format!("Competitor {}", i),
+                    origin: 0,
+                })
+            }
+            competitors
         },
-        Window {
-            duration: 30, // 30 minutes
-            competitors: VecDeque::from([]),
-        },
-    ];
-    time_windows.reverse();
-    let mut result = generate_startlist(time_windows, spacing_threshold, min_spacing);
+    });
+    let result = generate_startlist(time_windows, spacing_threshold, min_spacing);
     let start_time = chrono::naive::NaiveTime::from_hms_opt(9, 0, 0).unwrap();
-    result.sort_by(|c1, c2| c1.offset.cmp(&c2.offset));
     for (i, competitor_with_offset) in result.iter().enumerate() {
         println!(
             "[{}] Competitor: {}, time: {}",
