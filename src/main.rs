@@ -1,8 +1,6 @@
-#![feature(int_roundings)]
 #![feature(iter_map_windows)]
-#![feature(exclusive_range_pattern)]
 
-use std::cmp::{max, Ordering};
+use std::cmp::max;
 use std::collections::VecDeque;
 use std::ops::{Add, Div};
 
@@ -42,7 +40,6 @@ fn generate_startlist(
     min_spacing: Minutes,
 ) -> Vec<CompetitorWithOffset> {
     let mut competitors_count: isize = 0;
-    let mut entire_duration = 0;
 
     for window in windows.iter_mut() {
         window
@@ -50,7 +47,6 @@ fn generate_startlist(
             .make_contiguous()
             .shuffle(&mut thread_rng());
         competitors_count += window.competitors.len() as isize;
-        entire_duration += window.duration;
     }
     if competitors_count <= 0 {
         return vec![];
@@ -155,20 +151,6 @@ fn smart_offset_assignments(
     competitors
 }
 
-fn debug_windows(windows: &Vec<Window>) {
-    println!("---------------------");
-    println!("Max diff: {}", calculate_max_diff(windows));
-    for i in 0..windows.len() {
-        println!(
-            "[{i}]: {} / {} = {}",
-            windows[i].duration,
-            windows[i].competitors.len(),
-            windows[i].calculate_spacing()
-        );
-    }
-    println!("---------------------");
-}
-
 fn move_to_prev_window(windows: &mut Vec<Window>, i: usize) {
     let mut popped_competitor = windows[i].competitors.pop_front().unwrap();
     popped_competitor.origin += 1;
@@ -251,7 +233,7 @@ fn main() {
         duration: 30,
         competitors: {
             let mut competitors = VecDeque::new();
-            for i in 0..15 {
+            for i in 0..2 {
                 competitors.push_front(Competitor {
                     name: format!("1 Competitor {}", i),
                     origin: 0,
@@ -277,7 +259,7 @@ fn main() {
         duration: 30,
         competitors: {
             let mut competitors = VecDeque::new();
-            for i in 0..10 {
+            for i in 0..4 {
                 competitors.push_front(Competitor {
                     name: format!("3 Competitor {}", i),
                     origin: 0,
