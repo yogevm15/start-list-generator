@@ -56,32 +56,14 @@ fn generate_startlist(
         return vec![];
     }
 
-    let entire_spacing = (entire_duration as f64).div(competitors_count as f64);
-    if entire_spacing <= min_spacing as f64 {
-        let mut competitors = Vec::with_capacity(competitors_count as usize);
-        let mut curr_start = 0;
-        for window in windows {
-            for comp in window.competitors {
-                competitors.push(CompetitorWithOffset {
-                    competitor: comp,
-                    offset: curr_start,
-                });
-                curr_start += min_spacing;
-            }
-        }
-        competitors
-    } else {
-        stabilize_windows(&mut windows, spacing_threshold);
-        println!("END OF STABILIZATION");
-        debug_windows(&mut windows);
-        println!("END OF STABILIZATION");
-        smart_offset_assignments(windows, spacing_threshold, competitors_count)
-    }
+    stabilize_windows(&mut windows, spacing_threshold);
+    smart_offset_assignments(windows, spacing_threshold, min_spacing, competitors_count)
 }
 
 fn smart_offset_assignments(
     windows: Vec<Window>,
     spacing_threshold: Minutes,
+    min_spacing: Minutes,
     competitors_count: isize,
 ) -> Vec<CompetitorWithOffset> {
     let mut competitors = Vec::with_capacity(competitors_count as usize);
@@ -102,6 +84,9 @@ fn smart_offset_assignments(
                     break;
                 }
             }
+            if has_bottom {
+                curr_start -= spacing_threshold;
+            }
 
             let mut rev_curr_start = windows_curr_start + window.duration - 1;
             let mut top_competitors = Vec::with_capacity(window.competitors.len());
@@ -120,25 +105,26 @@ fn smart_offset_assignments(
             let mut remaining_competitors = window.competitors.len() as isize;
 
             if remaining_competitors != 0 {
-                let remaining_space =
-                    rev_curr_start + spacing_threshold - curr_start - spacing_threshold;
+                let remaining_space = rev_curr_start - curr_start;
                 let (spacing, mut remainder) = (
-                    remaining_space / (remaining_competitors + 1),
-                    remaining_space % (remaining_competitors + 1),
+                    remaining_space / (remaining_competitors),
+                    remaining_space % (remaining_competitors),
                 );
 
                 let mut rng = thread_rng();
                 let mut first_in_window = !has_bottom;
                 for comp in window.competitors {
                     if comp.origin == 0 {
-                        if rev_curr_start != (windows_curr_start + window.duration - 1)
-                            && rng.gen_bool(remainder as f64 / remaining_competitors as f64)
-                        {
-                            curr_start += 1;
-                            remainder -= 1;
-                        }
                         if !first_in_window {
-                            curr_start += spacing;
+                            if spacing >= min_spacing {
+                                if rng.gen_bool(remainder as f64 / remaining_competitors as f64) {
+                                    curr_start += 1;
+                                    remainder -= 1;
+                                }
+                                curr_start += spacing;
+                            } else {
+                                curr_start += min_spacing;
+                            }
                         } else {
                             first_in_window = false;
                         }
@@ -155,7 +141,7 @@ fn smart_offset_assignments(
 
             curr_start = if rev_curr_start == (windows_curr_start + window.duration - 1) {
                 max(
-                    curr_start + spacing_threshold,
+                    curr_start + min_spacing,
                     windows_curr_start + window.duration,
                 )
             } else {
@@ -184,14 +170,12 @@ fn debug_windows(windows: &Vec<Window>) {
 }
 
 fn move_to_prev_window(windows: &mut Vec<Window>, i: usize) {
-    println!("MOVE {} => {}", i, i - 1);
     let mut popped_competitor = windows[i].competitors.pop_front().unwrap();
     popped_competitor.origin += 1;
     windows[i - 1].competitors.push_back(popped_competitor);
 }
 
 fn move_to_next_window(windows: &mut Vec<Window>, i: usize) {
-    println!("MOVE {} => {}", i, i + 1);
     let mut popped_competitor = windows[i].competitors.pop_back().unwrap();
     popped_competitor.origin -= 1;
     windows[i + 1].competitors.push_front(popped_competitor);
@@ -213,7 +197,6 @@ fn stabilize_windows(windows: &mut Vec<Window>, spacing_threshold: Minutes) {
     let mut last_movement = None::<((usize, f64), (usize, f64), f64)>;
     let mut last_max_diff = f64::MAX;
     loop {
-        debug_windows(windows);
         let diffs = (0..windows.len())
             .map(|i| (i, windows[i].calculate_spacing()))
             .map_windows(|[s1, s2]| (s1.clone(), s2.clone(), s1.1 - s2.1))
@@ -258,61 +241,6 @@ fn stabilize_windows(windows: &mut Vec<Window>, spacing_threshold: Minutes) {
     }
 }
 
-// fn stabilize_window(windows: &mut Vec<Window>, i: usize, spacing_threshold: Minutes) {
-//     if calculate_window_space(windows[i].duration, windows[i].competitors.len() as isize)
-//         < spacing_threshold as f64
-//     {
-//         // curr is passed the spacing threshold, thus competitors movement is possible
-//         let curr_window_space =
-//             calculate_window_space(windows[i].duration, windows[i].competitors.len() as isize);
-//         if i > 0 && i < windows.len() - 1 {
-//             // Normal window
-//             let next_window_spacing = calculate_window_space(
-//                 windows[i + 1].duration,
-//                 windows[i + 1].competitors.len() as isize,
-//             );
-//             let prev_window_spacing = calculate_window_space(
-//                 windows[i - 1].duration,
-//                 windows[i - 1].competitors.len() as isize,
-//             );
-//             if next_window_spacing > curr_window_space && next_window_spacing > prev_window_spacing
-//             {
-//                 // next is spaced than curr and prev
-//                 move_to_next_window(windows, i, spacing_threshold);
-//             } else if prev_window_spacing > curr_window_space
-//                 && prev_window_spacing > next_window_spacing
-//             {
-//                 // prev is spaced than curr and next
-//                 move_to_prev_window(windows, i, spacing_threshold);
-//             } else if prev_window_spacing > curr_window_space
-//                 && prev_window_spacing == next_window_spacing
-//             {
-//                 if thread_rng().gen_bool(0.5) {
-//                     move_to_prev_window(windows, i, spacing_threshold);
-//                 } else {
-//                     move_to_next_window(windows, i, spacing_threshold);
-//                 }
-//             }
-//         } else if i > 0
-//             && calculate_window_space(
-//                 windows[i - 1].duration,
-//                 windows[i - 1].competitors.len() as isize,
-//             ) > curr_window_space
-//         {
-//             // Last window
-//             move_to_prev_window(windows, i, spacing_threshold);
-//         } else if i < windows.len() - 1
-//             && calculate_window_space(
-//                 windows[i + 1].duration,
-//                 windows[i + 1].competitors.len() as isize,
-//             ) > curr_window_space
-//         {
-//             // First window
-//             move_to_next_window(windows, i, spacing_threshold);
-//         }
-//     }
-// }
-
 fn main() {
     let spacing_threshold = 3;
     let min_spacing = 2;
@@ -323,22 +251,9 @@ fn main() {
         duration: 30,
         competitors: {
             let mut competitors = VecDeque::new();
-            for i in 0..10 {
+            for i in 0..15 {
                 competitors.push_front(Competitor {
-                    name: format!("Competitor {}", i),
-                    origin: 0,
-                })
-            }
-            competitors
-        },
-    });
-    time_windows.push(Window {
-        duration: 30,
-        competitors: {
-            let mut competitors = VecDeque::new();
-            for i in 0..10 {
-                competitors.push_front(Competitor {
-                    name: format!("Competitor {}", i),
+                    name: format!("1 Competitor {}", i),
                     origin: 0,
                 })
             }
@@ -351,7 +266,20 @@ fn main() {
             let mut competitors = VecDeque::new();
             for i in 0..15 {
                 competitors.push_front(Competitor {
-                    name: format!("Competitor {}", i),
+                    name: format!("2 Competitor {}", i),
+                    origin: 0,
+                })
+            }
+            competitors
+        },
+    });
+    time_windows.push(Window {
+        duration: 30,
+        competitors: {
+            let mut competitors = VecDeque::new();
+            for i in 0..10 {
+                competitors.push_front(Competitor {
+                    name: format!("3 Competitor {}", i),
                     origin: 0,
                 })
             }
